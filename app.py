@@ -5,14 +5,16 @@ import os
 import bcrypt
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'default_secret_key')
+app.secret_key = 'your_secret_key_here'  # Change to a secure random key in production
 
-# MongoDB connection (from environment variable)
-mongo_uri = os.environ.get('MONGO_URI', 'mongodb+srv://umatiyaaziz2004_db_user:umatiyaaziz2004@coinmining.evt4i93.mongodb.net/')
-client = MongoClient(mongo_uri)
+# MongoDB connection
+client = MongoClient('mongodb+srv://umatiyaaziz2004_db_user:umatiyaaziz2004@coinmining.evt4i93.mongodb.net/')
 db = client['streamflix']
 movies_collection = db['movies']
 users_collection = db['users']
+
+# Ensure templates directory exists
+os.makedirs('templates', exist_ok=True)
 
 @app.route('/')
 def index():
@@ -72,7 +74,8 @@ def add_movie():
                 'links': links
             }
 
-            movies_collection.insert_one(movie_data)
+            result = movies_collection.insert_one(movie_data)
+            print(f"Movie added with ID: {result.inserted_id}")
             return redirect(url_for('list_movies'))
         except Exception as e:
             print(f"Error adding movie: {e}")
@@ -105,7 +108,7 @@ def home():
     is_logged_in = 'user_id' in session
     return render_template('home.html', movies=all_movies, watchlist_ids=watchlist_ids, is_logged_in=is_logged_in)
 
-@app.route('/search')
+@app.route('/search', methods=['GET', 'POST'])
 def search():
     query = request.args.get('query', '').strip().lower()
     try:
@@ -131,6 +134,7 @@ def search():
 def mylist():
     if 'user_id' not in session:
         return redirect(url_for('login'))
+    sort = request.args.get('sort', 'year')
     watchlist_str_ids = session.get('watchlist', [])
     movies = []
     valid_ids = []
@@ -144,7 +148,17 @@ def mylist():
         except:
             pass
     session['watchlist'] = valid_ids
-    return render_template('mylist.html', movies=movies, watchlist_ids=valid_ids, is_logged_in=True)
+    watchlist_ids = valid_ids
+    if sort == 'title':
+        movies.sort(key=lambda m: m['title'].lower())
+    elif sort == 'year':
+        movies.sort(key=lambda m: m['year'], reverse=True)
+    elif sort == 'rating':
+        movies.sort(key=lambda m: m['rating'], reverse=True)
+    else:
+        sort = 'year'
+        movies.sort(key=lambda m: m['year'], reverse=True)
+    return render_template('mylist.html', movies=movies, watchlist_ids=watchlist_ids, sort=sort, is_logged_in=True)
 
 @app.route('/add_to_watchlist/<movie_id>', methods=['POST'])
 def add_to_watchlist(movie_id):
@@ -180,5 +194,15 @@ def movie_detail(movie_id):
         print(f"Error fetching movie: {e}")
         return render_template('movie_not_found.html'), 404
 
+@app.route('/sync_watchlist', methods=['POST'])
+def sync_watchlist():
+    if 'user_id' not in session:
+        return jsonify({'error': 'Not logged in', 'redirect': url_for('login')}), 401
+    data = request.get_json()
+    watchlist = data.get('watchlist', [])
+    session['watchlist'] = watchlist
+    session.modified = True
+    return jsonify({'success': True})
+
 if __name__ == '__main__':
-    app.run()
+    app.run(host='0.0.0.0', port=8080)
